@@ -1,0 +1,261 @@
+name: APK жасоо
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+      - name: Долбоорду түзүү жана чогултуу
+        run: |
+          set -e
+          mkdir -p proj/app/src/main/java/kg/jardamchy
+          cd proj
+          cat > settings.gradle.kts <<'X'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+          rootProject.name = "Jardamchy"
+          include(":app")
+          X
+          cat > build.gradle.kts <<'X'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          X
+          cat > gradle.properties <<'X'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2g
+          X
+          cat > app/build.gradle.kts <<'X'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "kg.jardamchy"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "kg.jardamchy"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          dependencies {
+              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.appcompat:appcompat:1.7.0")
+          }
+          X
+          cat > app/src/main/AndroidManifest.xml <<'X'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.READ_CONTACTS" />
+              <uses-permission android:name="android.permission.SEND_SMS" />
+
+              <queries>
+                  <package android:name="com.whatsapp" />
+                  <package android:name="com.google.android.youtube" />
+                  <package android:name="com.google.android.apps.maps" />
+                  <intent><action android:name="android.speech.action.RECOGNIZE_SPEECH" /></intent>
+              </queries>
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@android:drawable/ic_btn_speak_now"
+                  android:label="Жардамчы"
+                  android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          X
+          cat > app/src/main/java/kg/jardamchy/MainActivity.kt <<'X'
+          package kg.jardamchy
+
+          import android.Manifest
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.media.AudioManager
+          import android.media.ToneGenerator
+          import android.os.Bundle
+          import android.provider.ContactsContract
+          import android.speech.RecognizerIntent
+          import android.telephony.SmsManager
+          import android.view.Gravity
+          import android.view.ViewGroup
+          import android.widget.Button
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.core.app.ActivityCompat
+          import androidx.core.content.ContextCompat
+
+          class MainActivity : AppCompatActivity() {
+
+              private enum class Step { COMMAND, SMS_NAME, SMS_TEXT, SMS_CONFIRM }
+
+              private lateinit var btn: Button
+              private var step = Step.COMMAND
+              private var smsNumber = ""
+              private var smsName = ""
+              private var smsText = ""
+              private val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
+
+              private val speechLauncher =
+                  registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+                      val list = res.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                      if (list.isNullOrEmpty()) {
+                          show("Уккан жокмун.\nБасыңыз", "#B71C1C"); step = Step.COMMAND
+                      } else handle(list.map { it.lowercase().trim() })
+                  }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  btn = Button(this).apply {
+                      layoutParams = ViewGroup.LayoutParams(-1, -1)
+                      textSize = 34f
+                      typeface = Typeface.DEFAULT_BOLD
+                      setTextColor(Color.WHITE)
+                      gravity = Gravity.CENTER
+                      setOnClickListener { step = Step.COMMAND; listen("Буйрук бериңиз") }
+                  }
+                  setContentView(btn)
+                  show("🎤\nБасыңыз жана сүйлөңүз", "#1B5E20")
+                  ActivityCompat.requestPermissions(
+                      this, arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.SEND_SMS), 1
+                  )
+              }
+
+              private fun show(text: String, color: String) {
+                  btn.text = text
+                  btn.setBackgroundColor(Color.parseColor(color))
+              }
+
+              private fun listen(prompt: String) {
+                  tone.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+                  show("🎤 $prompt…", "#0D47A1")
+                  val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                      putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                      putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ky-KG")
+                      putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "ky-KG")
+                      putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+                      putExtra(RecognizerIntent.EXTRA_PROMPT, prompt)
+                  }
+                  try { speechLauncher.launch(i) } catch (e: Exception) {
+                      show("Google үн кызматы табылган жок", "#B71C1C")
+                  }
+              }
+
+              private fun has(list: List<String>, vararg words: String) =
+                  list.any { t -> words.any { t.contains(it) } }
+
+              private fun handle(r: List<String>) {
+                  val first = r[0]
+                  when (step) {
+                      Step.SMS_NAME -> {
+                          val found = findContact(first)
+                          if (found == null) {
+                              show("«$first» табылган жок.\nБасыңыз", "#B71C1C"); step = Step.COMMAND
+                          } else {
+                              smsName = found.first; smsNumber = found.second
+                              step = Step.SMS_TEXT; listen("${smsName}га эмне жазам?")
+                          }
+                      }
+                      Step.SMS_TEXT -> {
+                          smsText = first; step = Step.SMS_CONFIRM
+                          listen("«$smsText» — жөнөтөмбү? (ооба / жок)")
+                      }
+                      Step.SMS_CONFIRM -> {
+                          if (has(r, "ооба", "жөнөт", "да", "хорошо")) sendSms()
+                          else show("Жокко чыгарылды.\nБасыңыз", "#424242")
+                          step = Step.COMMAND
+                      }
+                      Step.COMMAND -> command(r)
+                  }
+              }
+
+              private fun command(r: List<String>) {
+                  when {
+                      has(r, "смс", "sms", "эсемес", "билдирүү жаз") -> {
+                          step = Step.SMS_NAME; listen("Кимге жазам?")
+                      }
+                      has(r, "whatsapp", "ватсап", "уотсап", "вацап") -> launchPkg("com.whatsapp")
+                      has(r, "галерея", "сүрөт") -> {
+                          val i = Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_GALLERY)
+                          openIntent(i)
+                      }
+                      has(r, "ютуб", "youtube") -> launchPkg("com.google.android.youtube")
+                      has(r, "музыка", "ыр") -> {
+                          val i = Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_MUSIC)
+                          openIntent(i)
+                      }
+                      has(r, "карта", "навигация") -> launchPkg("com.google.android.apps.maps")
+                      else -> show("Түшүнгөн жокмун:\n«${r[0]}»\nКайра басыңыз", "#B71C1C")
+                  }
+              }
+
+              private fun launchPkg(pkg: String) {
+                  val i = packageManager.getLaunchIntentForPackage(pkg)
+                  if (i == null) show("Программа орнотулган эмес", "#B71C1C") else openIntent(i)
+              }
+
+              private fun openIntent(i: Intent) {
+                  try { startActivity(i) } catch (e: Exception) {
+                      show("Ача алган жокмун", "#B71C1C")
+                  }
+              }
+
+              private fun findContact(name: String): Pair<String, String>? {
+                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
+                      != PackageManager.PERMISSION_GRANTED) return null
+                  val c = contentResolver.query(
+                      ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                      arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                              ContactsContract.CommonDataKinds.Phone.NUMBER),
+                      "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
+                      arrayOf("%$name%"), null
+                  ) ?: return null
+                  c.use { if (it.moveToFirst()) return Pair(it.getString(0), it.getString(1)) }
+                  return null
+              }
+
+              private fun sendSms() {
+                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS)
+                      != PackageManager.PERMISSION_GRANTED) {
+                      show("SMS уруксаты жок", "#B71C1C"); return
+                  }
+                  try {
+                      val sms = getSystemService(SmsManager::class.java)
+                      sms.sendMultipartTextMessage(smsNumber, null, sms.divideMessage(smsText), null, null)
+                      tone.startTone(ToneGenerator.TONE_PROP_ACK, 300)
+                      show("✅ Жөнөтүлдү: $smsName\nБасыңыз", "#1B5E20")
+                  } catch (e: Exception) {
+                      show("Жөнөтүлгөн жок", "#B71C1C")
+                  }
+              }
+          }
+          X
+          gradle assembleDebug --no-daemon --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Jardamchy-APK
+          path: proj/app/build/outputs/apk/debug/app-debug.apk
